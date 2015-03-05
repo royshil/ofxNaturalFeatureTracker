@@ -41,6 +41,16 @@ namespace ImageTrackerLib {
 using namespace cv;
 using namespace std;
 
+/* Tracker
+ * A basic natural features tracker for AR, that is given a trackable image to track and
+ * then will detect and track it in a video stream. 
+ * 
+ * It maintains its own runloop so not to disturb other processing threads, and provides a model-view matrix
+ * in OpenGL standars for any 3D augmentation.
+ * 
+ * It will switch automatically from bootstrap to optical-flow tracking based on the number of detected
+ * features, and will try to keep itself lean and fast while maintaining a strong 3D pose estimation.
+ */
 class Tracker : public ofThread  {
 private:
     Ptr<FeatureDetector>        detector;
@@ -98,7 +108,11 @@ public:
         taux.release();
     }
 };
-
+    
+/* MarkerDetector
+ * A Bag-of-Visual-Words detector that can be trained to detect markers in a scene.
+ * Can also save and load it's state from the filesystem
+ */
 class MarkerDetector {
     Ptr<BOWKMeansTrainer>            bowtrainer;
     Ptr<BOWImgDescriptorExtractor>   bowextractor;
@@ -139,8 +153,47 @@ public:
     vector<string> getMarkerFiles() const {  return marker_files; }
     void setMarkerFiles(vector<string> markerFiles) {  marker_files = markerFiles; }
 };
-
+   
+/* SimpleAdHocTracker
+ * A tracker that creates an ad-hoc marker from any trackable surface by using
+ * structure-from-motion (stereo triangulation) as a bootstrapping step
+ */
+class SimpleAdHocTracker {
+    Ptr<FeatureDetector>    detector;
+    bool                    bootstrapping;
+    vector<KeyPoint>        bootstrap_kp;
+    vector<KeyPoint>        trackedFeatures;
+    vector<Point3d>         trackedFeatures3D;
+    Mat                     prevGray;
+    Mat                     camMat;
+    bool                    canCalcMVM;
+    Mat                     raux,taux;
+    Mat                     cvToGl;
+    Mat_<double>            modelview_matrix;
     
+public:
+    SimpleAdHocTracker(const Ptr<FeatureDetector>&, const Mat& cam);
+    void bootstrap(const Mat&);
+    void bootstrapTrack(const Mat&);
+    void track(const Mat&);
+    void process(const Mat&, bool newmap = false);
+    bool canCalcModelViewMatrix() const;
+    void calcModelViewMatrix(Mat_<double>& modelview_matrix);
+    bool triangulateAndCheckReproj(const Mat& P, const Mat& P1);
+    bool cameraPoseAndTriangulationFromFundamental();
+    bool DecomposeEtoRandT(Mat_<double>& E, Mat_<double>& R1, Mat_<double>& R2, Mat_<double>& t1, Mat_<double>& t2);
+    
+    const vector<KeyPoint>& getTrackedFeatures() const {
+        return trackedFeatures;
+    }
+    const vector<Point3d>& getTracked3DFeatures() const {
+        return trackedFeatures3D;
+    }
+};
+
+/* ImageTracker
+ * A class to manage the individual marker trackers and the marker detector.
+ */
 class ImageTracker : public ofThread {
     std::vector<ofPtr<Tracker> >    trackers;
     MarkerDetector                  markerDetector;
