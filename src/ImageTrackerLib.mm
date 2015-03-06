@@ -141,11 +141,28 @@ vector<cv::Point> Pointsi(const vector<cv::Point_<T> >& points) {
     }
     return res;
 }
-vector<Point2f> Points(const vector<KeyPoint>& keypoints)
+template<typename T,typename V>
+vector<Point_<V> > Points(const vector<Point_<T> >& points) {
+    vector<Point_<V> > res;
+    for(unsigned i = 0; i < points.size(); i++) {
+        res.push_back(Point_<V>(points[i].x,points[i].y));
+    }
+    return res;
+}
+template<typename T,typename V>
+vector<Point3_<V> > Points(const vector<Point3_<T> >& points) {
+    vector<Point3_<V> > res;
+    for(unsigned i = 0; i < points.size(); i++) {
+        res.push_back(Point3_<V>(points[i].x,points[i].y,points[i].z));
+    }
+    return res;
+}
+template<typename T>
+vector<Point_<T> > Points(const vector<KeyPoint>& keypoints)
 {
-    vector<Point2f> res;
+    vector<Point_<T> > res;
     for(unsigned i = 0; i < keypoints.size(); i++) {
-        res.push_back(keypoints[i].pt);
+        res.push_back(Point_<T>(keypoints[i].pt.x,keypoints[i].pt.y));
     }
     return res;
 }
@@ -154,6 +171,28 @@ void drawBoundingBox(Mat& image, const vector<Point2f>& bb, const Scalar& color 
     for(unsigned i = 0; i < bb.size(); i++) {
         line(image, bb[i], bb[(i + 1) % bb.size()], color, 2);
     }
+}
+template<typename T, typename V>
+void keepVectorsByStatus(vector<T>& f1, vector<V>& f2, const vector<uchar>& status) {
+    vector<T> oldf1 = f1;
+    vector<V> oldf2 = f2;
+    f1.clear();
+    f2.clear();
+    for (int i = 0; i < status.size(); ++i) {
+        if(status[i])
+        {
+            f1.push_back(oldf1[i]);
+            f2.push_back(oldf2[i]);
+        }
+    }
+}
+template<typename T>
+vector<KeyPoint> KeyPoints(const vector<Point_<T> >& points) {
+    vector<KeyPoint> res;
+    for(unsigned i = 0; i < points.size(); i++) {
+        res.push_back(KeyPoint(points[i],1,0,0));
+    }
+    return res;
 }
 
 Tracker::Tracker(Mat_<float> cam, Ptr<FeatureDetector> d, Ptr<DescriptorExtractor> e):
@@ -259,7 +298,7 @@ void Tracker::bootstrapTracking(const Mat& frame, const Mat& useHomography, cons
     if(!useHomography.empty() && matched_on_frame.size() > 0) {
         //if we used the homography to warp the frame, we need to unwarp the keypoints
         vector<Point2f> kpPts;
-        perspectiveTransform(Points(matched_on_frame),kpPts,useHomography);
+        perspectiveTransform(Points<float>(matched_on_frame),kpPts,useHomography);
         for (int i = 0; i < kpPts.size(); ++i) {
             matched_on_frame[i].pt = kpPts[i];
         }
@@ -276,7 +315,7 @@ void Tracker::bootstrapTracking(const Mat& frame, const Mat& useHomography, cons
     if(matched_on_marker.size() >= min_inliers / 4) {
         if(debug) ofLog() << "try for homography with "<<matched_on_marker.size()<<" features";
         Mat inlier_mask, homography;
-        homography = findHomography(Points(matched_on_marker), Points(matched_on_frame),
+        homography = findHomography(Points<float>(matched_on_marker), Points<float>(matched_on_frame),
                                     RANSAC, ransac_thresh, inlier_mask);
 
         int survivors = countNonZero(inlier_mask);
@@ -317,7 +356,7 @@ void Tracker::track(const Mat& frame) {
 
         vector<uchar> status; vector<float> errors;
         Mat currGray; cvtColor(frame, currGray, CV_BGR2GRAY);
-        calcOpticalFlowPyrLK(prevGray,currGray,Points(trackedFeatures),corners,status,errors,cv::Size(11,11));
+        calcOpticalFlowPyrLK(prevGray,currGray,Points<int>(trackedFeatures),corners,status,errors,cv::Size(11,11));
 //        cvtColor(currGray, outputFrame, CV_GRAY2BGR);
         currGray.copyTo(prevGray);
 
@@ -342,8 +381,8 @@ void Tracker::track(const Mat& frame) {
         
         Mat inlier_mask;
         if(trackedFeaturesOnMarkerKP.size() >= 4) {
-            homography = findHomography(Points(trackedFeaturesOnMarkerKP),
-                                        Points(trackedFeatures),
+            homography = findHomography(Points<float>(trackedFeaturesOnMarkerKP),
+                                        Points<float>(trackedFeatures),
                                         0,
                                         ransac_thresh,
                                         inlier_mask);
@@ -423,14 +462,13 @@ void Tracker::calcModelViewMatrix(Mat_<float>& modelview_matrix, Mat_<float>& ca
         return;
     }
     vector<Point3f> ObjPoints;
-    vector<Point2f> ImagePoints;
     for (int i = 0; i < trackedFeaturesOnMarker.size(); ++i) {
         Point2f p = marker_kp[trackedFeaturesOnMarker[i]].pt;
         ObjPoints.push_back(Point3f(p.x - marker_frame.cols/2,p.y - marker_frame.rows/2,0) * (1.0/marker_frame.cols));
     }
 
     cv::Mat Rvec,Tvec;
-    cv::solvePnP(ObjPoints, Points(trackedFeatures), camMat, Mat(), raux, taux, !raux.empty());
+    cv::solvePnP(ObjPoints, Points<float>(trackedFeatures), camMat, Mat(), raux, taux, !raux.empty());
     raux.convertTo(Rvec,CV_32F);
     taux.convertTo(Tvec ,CV_64F);
 
@@ -695,7 +733,7 @@ bool SimpleAdHocTracker::DecomposeEtoRandT(
     double singular_values_ratio = fabsf(svd.w.at<double>(0) / svd.w.at<double>(1));
     if(singular_values_ratio>1.0) singular_values_ratio = 1.0/singular_values_ratio; // flip ratio to keep it [0,1]
     if (singular_values_ratio < 0.7) {
-        cout << "singular values are too far apart\n";
+        ofLogWarning() << "singular values of essential matrix are too far apart\n";
         return false;
     }
     
@@ -733,24 +771,24 @@ bool SimpleAdHocTracker::triangulateAndCheckReproj(const Mat& P, const Mat& P1) 
     int count = countNonZero(status);
     
     double percentage = ((double)count / (double)pt_3d.rows);
-    cout << count << "/" << pt_3d.rows << " = " << percentage*100.0 << "% are in front of camera" << endl;
+    ofLogVerbose() << count << "/" << pt_3d.rows << " = " << percentage*100.0 << "% are in front of camera";
     if(percentage < 0.75)
         return false; //less than 75% of the points are in front of the camera
     
     
     //calculate reprojection
-    cv::Mat_<double> R = P(Rect(0,0,3,3));
+    cv::Mat_<double> R = P(cv::Rect(0,0,3,3));
     Vec3d rvec(0,0,0); //Rodrigues(R ,rvec);
     Vec3d tvec(0,0,0); // = P.col(3);
     vector<Point2f> reprojected_pt_set1;
     projectPoints(pt_3d,rvec,tvec,camMat,Mat(),reprojected_pt_set1);
-    cout << Mat(reprojected_pt_set1).rowRange(0,10) << endl;
+//    cout << Mat(reprojected_pt_set1).rowRange(0,10) << endl;
     vector<Point2f> bootstrapPts_v = Points<float>(bootstrap_kp);
     Mat bootstrapPts = Mat(bootstrapPts_v);
-    cout << bootstrapPts.rowRange(0,10) << endl;
+//    cout << bootstrapPts.rowRange(0,10) << endl;
     
     double reprojErr = cv::norm(Mat(reprojected_pt_set1),bootstrapPts,NORM_L2)/(double)bootstrapPts_v.size();
-    cout << "reprojErr " << reprojErr << endl;
+    ofLogVerbose() << "reprojection Error " << reprojErr;
     if(reprojErr < 5) {
         vector<uchar> status(bootstrapPts_v.size(),0);
         for (int i = 0;  i < bootstrapPts_v.size(); ++ i) {
@@ -762,7 +800,7 @@ bool SimpleAdHocTracker::triangulateAndCheckReproj(const Mat& P, const Mat& P1) 
         pt_3d.copyTo(Mat(trackedFeatures3D));
         
         keepVectorsByStatus(trackedFeatures,trackedFeatures3D,status);
-        cout << "keeping " << trackedFeatures.size() << " nicely reprojected points"<<endl;
+        ofLogVerbose() << "keeping " << trackedFeatures.size() << " nicely reprojected points";
         bootstrapping = false;
         return true;
     }
@@ -778,7 +816,7 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
     vector<uchar> status;
     Mat F = findFundamentalMat(trackedFeaturesPts, bootstrapPts, FM_RANSAC, 0.006 * maxVal, 0.99, status);
     int inliers_num = countNonZero(status);
-    cout << "Fundamental keeping " << inliers_num << " / " << status.size() << endl;
+    ofLogVerbose() << "Fundamental keeping " << inliers_num << " / " << status.size();
     keepVectorsByStatus(trackedFeatures,bootstrap_kp,status);
     
     if(inliers_num > min_inliers) {
@@ -787,7 +825,7 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
         
         //according to http://en.wikipedia.org/wiki/Essential_matrix#Properties_of_the_essential_matrix
         if(fabsf(determinant(E)) > 1e-07) {
-            cout << "det(E) != 0 : " << determinant(E) << "\n";
+            ofLogVerbose() << "det(E) != 0 : " << determinant(E);
             return false;
         }
         
@@ -799,12 +837,12 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
         
         if(determinant(R1)+1.0 < 1e-09) {
             //according to http://en.wikipedia.org/wiki/Essential_matrix#Showing_that_it_is_valid
-            cout << "det(R) == -1 ["<<determinant(R1)<<"]: flip E's sign" << endl;
+            ofLogVerbose() << "det(R) == -1 ["<<determinant(R1)<<"]: flip E's sign";
             E = -E;
             if (!DecomposeEtoRandT(E,R1,R2,t1,t2)) return false;
         }
         if(fabsf(determinant(R1))-1.0 > 1e-07) {
-            cerr << "det(R) != +-1.0, this is not a rotation matrix" << endl;
+            ofLogWarning() << "det(R) != +-1.0, this is not a rotation matrix";
             return false;
         }
         
@@ -815,7 +853,7 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
                            R1(0,0),   R1(0,1),    R1(0,2),    t1(0),
                            R1(1,0),   R1(1,1),    R1(1,2),    t1(1),
                            R1(2,0),   R1(2,1),    R1(2,2),    t1(2));
-        cout << "P1\n" << Mat(P1) << endl;
+        ofLogVerbose() << "P1\n" << Mat(P1) << endl;
         
         bool triangulationSucceeded = true;
         if(!triangulateAndCheckReproj(P,P1)) {
@@ -823,24 +861,24 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
                   R1(0,0),   R1(0,1),    R1(0,2),    t2(0),
                   R1(1,0),   R1(1,1),    R1(1,2),    t2(1),
                   R1(2,0),   R1(2,1),    R1(2,2),    t2(2));
-            cout << "P1\n" << Mat(P1) << endl;
+            ofLogVerbose() << "P1\n" << Mat(P1) << endl;
             
             if(!triangulateAndCheckReproj(P,P1)) {
                 Mat_<double> P1 = (Mat_<double>(3,4) <<
                                    R2(0,0),   R2(0,1),    R2(0,2),    t2(0),
                                    R2(1,0),   R2(1,1),    R2(1,2),    t2(1),
                                    R2(2,0),   R2(2,1),    R2(2,2),    t2(2));
-                cout << "P1\n" << Mat(P1) << endl;
+                ofLogVerbose() << "P1\n" << Mat(P1) << endl;
                 
                 if(!triangulateAndCheckReproj(P,P1)) {
                     Mat_<double> P1 = (Mat_<double>(3,4) <<
                                        R2(0,0),   R2(0,1),    R2(0,2),    t1(0),
                                        R2(1,0),   R2(1,1),    R2(1,2),    t1(1),
                                        R2(2,0),   R2(2,1),    R2(2,2),    t1(2));
-                    cout << "P1\n" << Mat(P1) << endl;
+                    ofLogVerbose() << "P1\n" << Mat(P1) << endl;
                     
                     if(!triangulateAndCheckReproj(P,P1)) {
-                        cerr << "can't find the right P matrix\n";
+                        ofLogWarning() << "can't find the right P matrix\n";
                         triangulationSucceeded = false;
                     }
                 }
@@ -855,7 +893,7 @@ bool SimpleAdHocTracker::cameraPoseAndTriangulationFromFundamental() {
 
 void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
     //Track detected features
-    if(prevGray.empty()) { cerr << "can't track: empty prev frame"; return; }
+    if(prevGray.empty()) { ofLogError() << "can't track: empty prev frame"; return; }
     
     {
         vector<Point2f> corners;
@@ -865,7 +903,7 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
         currGray.copyTo(prevGray);
         
         if(countNonZero(status) < status.size() * 0.8) {
-            cerr << "tracking failed";
+            ofLogWarning() << "tracking failed";
             bootstrapping = false;
             return;
         }
@@ -873,9 +911,10 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
         trackedFeatures = KeyPoints(corners);
         keepVectorsByStatus(trackedFeatures,bootstrap_kp,status);
     }
-    cout << trackedFeatures.size() << " features survived optical flow\n"; cout.flush();
+    ofLogVerbose() << trackedFeatures.size() << " features survived optical flow";
     assert(trackedFeatures.size() == bootstrap_kp.size());
     
+    //verify features with a homography
     Mat inlier_mask, homography;
     if(trackedFeatures.size() >= 4) {
         homography = findHomography(Points<float>(trackedFeatures),
@@ -885,13 +924,12 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
                                     inlier_mask);
     }
     
-    //This will occur only if the homography method is RANSAC or LMEDS - so usually not.
     int inliers_num = countNonZero(inlier_mask);
-    cout << inliers_num << " features survived homography\n"; cout.flush();
+    ofLogVerbose() << inliers_num << " features survived homography";
     if(inliers_num != trackedFeatures.size() && inliers_num >= 4 && !homography.empty()) {
         keepVectorsByStatus(trackedFeatures,bootstrap_kp,inlier_mask);
     } else if(inliers_num < min_inliers) {
-        cout << "not enough features survived homography."; cout.flush();
+        ofLogVerbose() << "not enough features survived homography.";
         bootstrapping = false;
         return;
     }
@@ -909,10 +947,9 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
         if(triangulationSucceeded) {
             //triangulation succeeded, test for coplanarity
             Mat trackedFeatures3DM(trackedFeatures3D);
-            //            cout << trackedFeatures3DM.size() << endl; cout.flush();
             trackedFeatures3DM = trackedFeatures3DM.reshape(1,trackedFeatures3D.size());
-            //            cout << trackedFeatures3DM.size() << endl; cout.flush();
-            
+
+            //PCA will determine if most of the points are on plane
             cv::PCA pca(trackedFeatures3DM,Mat(),CV_PCA_DATA_AS_ROW);
             
             int num_inliers = 0;
@@ -930,39 +967,19 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
                     status[i] = 1;
                 }
             }
-            cout << num_inliers << "/" << trackedFeatures3D.size() << " are coplanar" << endl;
+            ofLogVerbose() << num_inliers << "/" << trackedFeatures3D.size() << " are coplanar";
             bootstrapping = ((double)num_inliers / (double)(trackedFeatures3D.size())) < 0.75;
             if(!bootstrapping) {
+                //enough features are coplanar, keep them and flatten them on the XY plane
                 keepVectorsByStatus(trackedFeatures3D,trackedFeatures,status);
                 
-                //                cout << pca.eigenvectors << endl << " det: " << determinant(pca.eigenvectors) << endl;;
-                //                Mat invRot = pca.eigenvectors.t();
-                //                invRot.row(0) /= norm(invRot.row(0));
-                //                invRot.row(1) /= norm(invRot.row(1));
-                //                invRot.row(2) /= norm(invRot.row(2));
-                //                cout << invRot << endl << " det: " << determinant(invRot) << endl;;
-                
-                //                cout << "original\n";
-                //                std::copy(trackedFeatures3D.begin(),trackedFeatures3D.begin()+10,ostream_iterator<Point3d>(cout,"\n"));
-                //                cout.flush();
-                
-                //                trackedFeatures3DM = Mat(trackedFeatures3D).reshape(1);
+                //the PCA has the major axes of the plane
                 Mat projected = pca.project(trackedFeatures3DM);
                 projected.col(2).setTo(0);
                 projected.copyTo(trackedFeatures3DM);
                 
-                //                trackedFeatures3DM = Mat(trackedFeatures3D);
-                //                trackedFeatures3DM = trackedFeatures3DM.reshape(3,trackedFeatures3D.size());
-                //                subtract(trackedFeatures3DM,pca.mean,trackedFeatures3DM);
-                //                cout << "subtract\n";
-                //                std::copy(trackedFeatures3D.begin(),trackedFeatures3D.begin()+10,ostream_iterator<Point3d>(cout,"\n"));
-                //
-                //                trackedFeatures3DM = trackedFeatures3DM.reshape(1,trackedFeatures3D.size());
-                //                trackedFeatures3DM = trackedFeatures3DM * invRot;
-                
-                //                cout << "inv rotate\n";
-                //                std::copy(trackedFeatures3D.begin(),trackedFeatures3D.begin()+10,ostream_iterator<Point3d>(cout,"\n"));
             } else {
+                ofLogWarning() << "not enough features are coplanar";
                 bootstrap_kp = bootstrap_kp_orig;
                 trackedFeatures = trackedFeatures_orig;
             }
@@ -974,7 +991,7 @@ void SimpleAdHocTracker::bootstrapTrack(const Mat& img) {
 
 void SimpleAdHocTracker::track(const cv::Mat &img) {
     //Track detected features
-    if(prevGray.empty()) { cerr << "can't track: empty prev frame"; return; }
+    if(prevGray.empty()) { ofLogError() << "can't track: empty prev frame"; return; }
     
     {
         vector<Point2f> corners;
@@ -984,7 +1001,7 @@ void SimpleAdHocTracker::track(const cv::Mat &img) {
         currGray.copyTo(prevGray);
         
         if(countNonZero(status) < status.size() * 0.8) {
-            cerr << "tracking failed";
+            ofLogError() << "tracking failed";
             bootstrapping = false;
             canCalcMVM = false;
             return;
@@ -1008,8 +1025,8 @@ void SimpleAdHocTracker::track(const cv::Mat &img) {
         
         // [R | t] matrix
         Mat_<double> para = Mat_<double>::eye(4,4);
-        Rot.convertTo(para(Rect(0,0,3,3)),CV_64F);
-        Tvec.copyTo(para(Rect(3,0,1,3)));
+        Rot.convertTo(para(cv::Rect(0,0,3,3)),CV_64F);
+        Tvec.copyTo(para(cv::Rect(3,0,1,3)));
         para = cvToGl * para;
         
         //        cout << para << endl;
@@ -1020,11 +1037,11 @@ void SimpleAdHocTracker::track(const cv::Mat &img) {
 
 void SimpleAdHocTracker::process(const Mat& img, bool newmap) {
     if(newmap) {
-        cout << "bootstrapping\n";
+        ofLogVerbose() << "bootstrapping\n";
         bootstrap(img);
         bootstrapping = true;
     } else if(bootstrapping) {
-        cout << "bootstrap tracking ("<< trackedFeatures.size() << ")\n";
+        ofLogVerbose() << "bootstrap tracking ("<< trackedFeatures.size() << ")\n";
         bootstrapTrack(img);
     } else if(!newmap && !bootstrapping) {
         track(img);
